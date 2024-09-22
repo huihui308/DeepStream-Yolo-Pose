@@ -1,0 +1,11 @@
+
+*.o
+*.so
+deepstream
+*.engine
+*.onnx
+*.mp4
+*.vscode
+*.h264
+*.avi
+
