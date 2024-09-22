@@ -348,13 +348,59 @@ main(gint argc, char *argv[])
     return -1;
   }
 
+  GstCaps *caps = NULL;
+  GstElement *queue = NULL;
+  GstElement *transform = NULL;
+  GstElement *cap_filter = NULL;
+  GstElement *encoder = NULL;
+  GstElement *codecparse = NULL;
+  GstElement *mux = NULL;
   GstElement *sink = NULL;
-  if (JETSON) {
+  if (JETSON && !SAVE_FILE) {
     sink = gst_element_factory_make("nv3dsink", "nv3dsink");
     if (!sink) {
       g_printerr("ERROR: Failed to create nv3dsink\n");
       return -1;
     }
+  }
+  else if (JETSON && SAVE_FILE) {
+    // create_encode_file_bin (NvDsSinkEncoderConfig * config, NvDsSinkBinSubBin * bin)
+    queue = gst_element_factory_make (NVDS_ELEM_QUEUE, "sink_queue");
+    if (!queue) {
+      g_printerr("Failed to create '%s'", "sink_queue");
+      return -1;
+    }
+    transform = gst_element_factory_make (NVDS_ELEM_VIDEO_CONV, "video_transform");
+    if (!transform) {
+      g_printerr("Failed to create '%s'", "video_transform");
+      return -1;
+    }
+    cap_filter = gst_element_factory_make (NVDS_ELEM_CAPS_FILTER, "video_cap_filter");
+    if (!cap_filter) {
+      g_printerr("Failed to create '%s'", "video_cap_filter");
+      return -1;
+    }
+
+    //caps = gst_caps_from_string ("video/x-raw, format=I420");
+    caps = gst_caps_from_string ("video/x-raw(memory:NVMM), format=I420");
+    g_object_set (G_OBJECT (cap_filter), "caps", caps, NULL);
+
+    //encoder = gst_element_factory_make (NVDS_ELEM_ENC_H264_SW, "sink_encoder");
+    encoder = gst_element_factory_make (NVDS_ELEM_ENC_H264_HW, "sink_encoder");
+
+    g_object_set (G_OBJECT (encoder), "profile", 0, NULL);
+    //g_object_set (G_OBJECT (encoder), "iframeinterval", config->iframeinterval, NULL);
+    g_object_set (G_OBJECT (encoder), "bitrate", 15000000, NULL);
+
+    codecparse = gst_element_factory_make ("h264parse", "h264-parser");
+
+    mux = gst_element_factory_make (NVDS_ELEM_MUX_MP4, "sink_mux");
+
+    sink = gst_element_factory_make (NVDS_ELEM_SINK_FILE, "sink");
+
+    g_object_set (G_OBJECT (sink), "location", "./result.mp4",
+        "sync", FALSE, "async", FALSE, NULL);
+    g_object_set (G_OBJECT (transform), "gpu-id", GPU_ID, NULL);
   }
   else {
     sink = gst_element_factory_make("nveglglessink", "nveglglessink");
@@ -405,10 +451,20 @@ main(gint argc, char *argv[])
     g_object_set(G_OBJECT(osd), "gpu_id", GPU_ID, NULL);
   }
 
-  gst_bin_add_many(GST_BIN(pipeline), pgie, tracker, converter, osd, sink, NULL);
-  if (!gst_element_link_many(streammux, pgie, tracker, converter, osd, sink, NULL)) {
-    g_printerr("ERROR: Pipeline elements could not be linked\n");
-    return -1;
+  if (SAVE_FILE) {
+    gst_bin_add_many(GST_BIN(pipeline), pgie, tracker, converter, osd, 
+                  queue, transform, cap_filter, encoder, codecparse, mux, sink, NULL);
+    if (!gst_element_link_many(streammux, pgie, tracker, converter, osd, 
+              queue, transform, cap_filter, encoder, codecparse, mux, sink, NULL)) {
+      g_printerr("ERROR: Pipeline elements could not be linked\n");
+      return -1;
+    }
+  } else {
+    gst_bin_add_many(GST_BIN(pipeline), pgie, tracker, converter, osd, sink, NULL);
+    if (!gst_element_link_many(streammux, pgie, tracker, converter, osd, sink, NULL)) {
+      g_printerr("ERROR: Pipeline elements could not be linked\n");
+      return -1;
+    }
   }
 
   GstBus *bus = gst_pipeline_get_bus(GST_PIPELINE(pipeline));
